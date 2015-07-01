@@ -13,34 +13,50 @@
 # Dependencies:
 #   Linux, Python 2.6, Pyinotify, opencv, tkinter
 #
-from optparse import OptionParser
-import time
-import numpy as np
-#import datetime
-#from collections import defaultdict
-#from collections import Counter
-#from pprint import pprint
-#import subprocess
+import datetime
 import sys
-import cv2
-#import pyinotify
+import threading
+from pprint import pprint
+
+from optparse import OptionParser
+from collections import Counter
+from collections import defaultdict
 import Tkinter as tk
 from PIL import ImageTk
 
+import numpy as np
+import cv2
+import pyinotify
 
 RESET_SECONDS = 1
 IMG_EXTS = ['jpeg' ,'jpg', 'png']
 #GROUPS = ['INPUTS', 'OUTPUTS']
 GROUPS = ['OUTPUTS']
+MainApp = None
 
 def main(path='.', exts=[], timeout=1):
-    print(path)
-    print(exts)
-    print(timeout)
+    global MainApp
 
-    app = Application()
-    app.master.title('Sample application')
-    app.mainloop()
+    # create monitoring service
+    wm = pyinotify.WatchManager()
+    wm.add_watch(path, pyinotify.ALL_EVENTS, rec=True, auto_add=True)
+    handler = OnWriteHandler(cwd=path, exts=exts, timeout=timeout)
+    notifier = pyinotify.ThreadedNotifier(wm, default_proc_fun=handler)
+    #import ipdb; ipdb.set_trace()
+    print '==> Start monitoring %s (type c^c to exit)' % path
+    notifier.start()
+
+    # create application window
+    MainApp = Application()
+    MainApp.master.title('Sample application')
+
+    # runs until window closed
+    try:
+        MainApp.mainloop()
+        notifier.stop()
+    except:
+        notifier.stop()
+    sys.exit(0)
 
 class Application(tk.Frame):
     def __init__(self, master=None):
@@ -76,38 +92,31 @@ class Application(tk.Frame):
         label_out.grid(         row=3, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
         self.img_window_2.grid( row=4, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
 
-        #self.bind_all('<Configure>', self.onResize)
+    def change_images(self, inputs, outputs):
+        print("Configuration updated!")
+#        self.img = tk.PhotoImage(file='cpptest/test.ppm')
+#        id1 = self.img_window_1.create_oval(10, 10, 100, 100)
+#        id2 = self.img_window_1.create_image(100, 100, image=self.img)
+#        id3 = self.img_window_2.create_image(100, 100, image=self.img)
 
-        self.img = tk.PhotoImage(file='cpptest/test.ppm')
-        id1 = self.img_window_1.create_oval(10, 10, 100, 100)
-        id2 = self.img_window_1.create_image(100, 100, image=self.img)
-        id3 = self.img_window_2.create_image(100, 100, image=self.img)
+class OnWriteHandler(pyinotify.ProcessEvent):
+    def __init__(self, cwd, exts, timeout):
+        self.cwd = cwd
+        self.exts = exts
+        self.timeout = timeout
 
-#class OnWriteHandler(pyinotify.ProcessEvent):
-#    def __init__(self, cwd, extension, cmd):
-#        self.cwd = cwd
-#        self.extensions = extension.split(',')
-#        self.cmd = cmd
-#
-#        # all open files (across groups)
-#        self.open_files = {}
-#
-#        # set of files to ignore, temporarily
-#        self.ignore = Counter()
-#
-#        # Open Window and create display buffer for each group
-#        self.group_buffers = {}
-#        for g in GROUPS:
-#            self.group_buffers[g] = np.empty([1000, 1000], np.uint8)
-##            cv2.namedWindow(g)
-##            cv2.imshow(g, self.group_buffers[g])
-#
-#        # set of active images, keyed by group
-#        self.active = defaultdict(set)
-#
-#        # if, during update the last update was too long ago, remove all
-#        self.last_update = datetime.datetime.utcnow()
-#
+        # all open files (across groups)
+        self.open_files = {}
+
+        # set of files to ignore, temporarily
+        self.ignore = Counter()
+
+        # set of active images, keyed by group
+        self.active = defaultdict(set)
+
+        # if, during update the last update was too long ago, remove all
+        self.last_update = datetime.datetime.utcnow()
+
 #    def tile(self, group):
 #        # make sure all the files in the file list have been read
 #        tmp = None
@@ -130,81 +139,44 @@ class Application(tk.Frame):
 #        #cv2.imshow(group, buf)
 #        # will just open up lots of images! need to modify in place?
 #        self.open_files[tmp].show()
-#
-#    def check_show(self, path, group):
-#        now = datetime.datetime.utcnow()
-#        if (now - self.last_update).total_seconds() > RESET_SECONDS:
-#            self.active = defaultdict(set)
-#            self.last_update = now
-#
-#        is_image = False
-#        print(path)
-#        path = path.lower()
-#        for ext in IMG_EXTS:
-#            if path.endswith(ext):
-#                is_image = True
-#
-#                # set as active
-#                self.active[group].add(path)
-#                print('make active {}'.format(self.active))
-#                # remove from buffered files since there was a change
-#                if path in self.open_files:
-#                    del self.open_files[path]
-#
-#        # update buffer with new image
-#        if is_image:
-#            self.tile(group)
-#
-#    def check_recompile(self, path):
-#        for ext in self.extensions:
-#            if path.endswith(ext):
-#                print '==> Modification detected'
-#                subprocess.call(self.cmd.split(' '), cwd=self.cwd)
-#                return
-#
-#
-#    def process_IN_MODIFY(self, event):
-#        if self.ignore[event.pathname] == 0:
-#            self.check_recompile(event.pathname)
-#        else:
-#            self.ignore[event.pathname] -= 1
-#
-#
-##    def process_IN_CLOSE_NOWRITE(self, event):
-##        if self.ignore[event.pathname] == 0:
-##            self.check_show(event.pathname, 'OUTPUTS')
-##        else:
-##            self.ignore[event.pathname] -= 1
-#
-#    def process_IN_CLOSE_WRITE(self, event):
-#        if self.ignore[event.pathname] == 0:
-#            self.check_show(event.pathname, 'OUTPUTS')
-#        else:
-#            self.ignore[event.pathname] -= 1
-#
-#if __name__ == '__main__':
-#    if len(sys.argv) < 3:
-#        print >> sys.stderr, "Command line error: missing argument(s)."
-#        sys.exit(1)
-#
-#    # Required arguments
-#    path = sys.argv[1]
-#    extension = sys.argv[2]
-#
-#    # Optional argument
-#    cmd = 'make'
-#    if len(sys.argv) == 4:
-#        cmd = sys.argv[3]
-#
-#    # Blocks monitoring
-#    wm = pyinotify.WatchManager()
-#    handler = OnWriteHandler(cwd=path, extension=extension, cmd=cmd)
-#    notifier = pyinotify.Notifier(wm, default_proc_fun=handler)
-#    wm.add_watch(path, pyinotify.ALL_EVENTS, rec=True, auto_add=True)
-#    print '==> Start monitoring %s (type c^c to exit)' % path
-#    notifier.loop()
-#
-#
+
+    def check_show(self, path, group):
+        now = datetime.datetime.utcnow()
+        if (now - self.last_update).total_seconds() > RESET_SECONDS:
+            self.active = defaultdict(set)
+            self.last_update = now
+
+        is_image = False
+        path = path.lower()
+        for ext in IMG_EXTS:
+            if path.endswith(ext):
+                is_image = True
+
+                # set as active
+                self.active[group].add(path)
+                print('make active {}'.format(self.active))
+                # remove from buffered files since there was a change
+                if path in self.open_files:
+                    del self.open_files[path]
+
+        # update buffer with new image
+        if is_image:
+            pprint(self.active)
+            #self.tile(group)
+
+    def process_IN_CLOSE_NOWRITE(self, event):
+        if self.ignore[event.pathname] == 0:
+            self.check_show(event.pathname, 'OUTPUTS')
+        else:
+            self.ignore[event.pathname] -= 1
+
+    def process_IN_CLOSE_WRITE(self, event):
+        if self.ignore[event.pathname] == 0:
+            self.check_show(event.pathname, 'OUTPUTS')
+        else:
+            self.ignore[event.pathname] -= 1
+
+
 #def cvShowManyImages(title, *args):
 #
 #    for imname in args:
