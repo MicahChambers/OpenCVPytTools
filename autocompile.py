@@ -22,7 +22,7 @@ from pprint import pprint
 import subprocess
 import sys
 import pyinotify
-import cv2
+from PIL import Image
 
 RESET_SECONDS = 1
 IMG_EXTS = ['jpeg' ,'jpg', 'png']
@@ -64,16 +64,18 @@ class OnWriteHandler(pyinotify.ProcessEvent):
                 # re-read file (and ignore in the interim)
                 import ipdb; ipdb.set_trace()
                 self.ignore[f] += 3
-                self.open_files[f] = cv2.imread(f)
+                self.open_files[f] = Image.open(f)
                 tmp = f
 
         pprint(self.open_files)
         # tile the images, by factoring
         # TODO, for now just show the latest image
-        buf = self.group_buffers[group]
-        cv2.resize(self.open_files[tmp], buf.shape, buf)
-        print('imshow', group, buf)
-        cv2.imshow(group, buf)
+        #buf = self.group_buffers[group]
+        #cv2.resize(self.open_files[tmp], buf.shape, buf)
+        #print('imshow', group, buf)
+        #cv2.imshow(group, buf)
+        # will just open up lots of images! need to modify in place?
+        self.open_files[tmp].show()
 
     def check_show(self, path, group):
         now = datetime.datetime.utcnow()
