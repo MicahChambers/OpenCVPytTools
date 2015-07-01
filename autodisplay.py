@@ -78,13 +78,10 @@ class Application(tk.Frame):
 
         #self.bind_all('<Configure>', self.onResize)
 
-        #img = tk.PhotoImage(file='cpptest/test.ppm')
-        img = tk.BitmapImage(file='cpptest/test.xbm')
+        self.img = tk.PhotoImage(file='cpptest/test.ppm')
         id1 = self.img_window_1.create_oval(10, 10, 100, 100)
-        id2 = self.img_window_1.create_bitmap(100, 100, bitmap=img)
-        id3 = self.img_window_2.create_bitmap(100, 100, bitmap=img)
-        #id2 = self.img_window_1.create_bitmap(0, 0, bitmap='gray25')
-        #id3 = self.img_window_2.create_bitmap(0, 0, bitmap='gray25')
+        id2 = self.img_window_1.create_image(100, 100, image=self.img)
+        id3 = self.img_window_2.create_image(100, 100, image=self.img)
 
 #class OnWriteHandler(pyinotify.ProcessEvent):
 #    def __init__(self, cwd, extension, cmd):
