@@ -1,14 +1,11 @@
 #!/usr/bin/env python2
 #
-# Usage:
-#   ./autocompile.py path ext1,ext2,extn cmd
-#
 # Blocks monitoring |path| and its subdirectories for modifications on
 # files ending with suffix |extk|. Run |cmd| each time a modification
 # is detected. |cmd| is optional and defaults to 'make'.
 #
 # Example:
-#   ./autocompile.py /my-latex-document-dir .tex,.bib "make pdf"
+#   ./autocompile.py -d /my-latex-document-dir -e .tex,.bib -c "make pdf"
 #
 # Dependencies:
 #   Linux, Python 2.6, Pyinotify
@@ -17,11 +14,12 @@ import datetime
 import subprocess
 import sys
 import pyinotify
+from optparse import OptionParser
 
 class OnWriteHandler(pyinotify.ProcessEvent):
-    def __init__(self, cwd, extension, cmd):
+    def __init__(self, cwd, exts, cmd):
         self.cwd = cwd
-        self.extensions = extension.split(',')
+        self.extensions = exts
         self.cmd = cmd
 
         # if, during update the last update was too long ago, remove all
@@ -34,29 +32,27 @@ class OnWriteHandler(pyinotify.ProcessEvent):
                 subprocess.call(self.cmd.split(' '), cwd=self.cwd)
                 return
 
-
     def process_IN_MODIFY(self, event):
         self.check_recompile(event.pathname)
 
-
-if __name__ == '__main__':
-    if len(sys.argv) < 3:
-        print >> sys.stderr, "Command line error: missing argument(s)."
-        sys.exit(1)
-
-    # Required arguments
-    path = sys.argv[1]
-    extension = sys.argv[2]
-
-    # Optional argument
-    cmd = 'make'
-    if len(sys.argv) == 4:
-        cmd = sys.argv[3]
-
+def main(path, exts, cmd):
     # Blocks monitoring
     wm = pyinotify.WatchManager()
-    handler = OnWriteHandler(cwd=path, extension=extension, cmd=cmd)
+    handler = OnWriteHandler(cwd=path, exts=exts, cmd=cmd)
     notifier = pyinotify.Notifier(wm, default_proc_fun=handler)
     wm.add_watch(path, pyinotify.ALL_EVENTS, rec=True, auto_add=True)
     print '==> Start monitoring %s (type c^c to exit)' % path
     notifier.loop()
+
+if __name__ == '__main__':
+    parser = OptionParser()
+    parser.add_option("-d", "--dir", default='.',
+                      help="Directory to watch", metavar="DIR")
+    parser.add_option("-e", "--exts", default='.cxx,.c,.cpp,.h',
+                      help="List of extensions, separated by commas")
+    parser.add_option("-c", "--cmd", default='make',
+                      help="Command (default make).")
+
+    (options, args) = parser.parse_args()
+
+    main(options.dir, options.exts, options.cmd)
