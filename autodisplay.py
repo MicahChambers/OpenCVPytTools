@@ -52,11 +52,13 @@ def main(path='.', exts=[], timeout=1):
 
     # runs until window closed
     try:
+        MainApp.after(2000, MainApp.checkup)
         MainApp.mainloop()
         notifier.stop()
     except:
         notifier.stop()
     sys.exit(0)
+
 
 class Application(tk.Frame):
     def __init__(self, master=None):
@@ -91,6 +93,10 @@ class Application(tk.Frame):
         self.img_window_1.grid( row=2, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
         label_out.grid(         row=3, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
         self.img_window_2.grid( row=4, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
+
+    def checkup(self):
+        print("Checkup")
+        self.after(2000, MainApp.checkup)
 
     def change_images(self, inputs, outputs):
         print("Configuration updated!")
