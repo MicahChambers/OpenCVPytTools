@@ -63,7 +63,7 @@ class Application(tk.Frame):
         notifier.start()
 
         # all open files (across groups)
-        self.open_files = {}
+        self.open_files = {}  # open_files[group][filename] = time
 
     def __del__(self):
         notifier.stop()
@@ -96,18 +96,46 @@ class Application(tk.Frame):
         label_out.grid(         row=3, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
         self.img_window_2.grid( row=4, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
 
+    def item_count(dictval):
+        count = 0
+        for val in dictval.values():
+            if isinstance(values, list):
+                count += len(values)
+            if isinstance(values, dict):
+                count += len(values)
+            elif isinstance(values, str):
+                count += 1
+        return count
+
+    def display_images()
+        pprint(self.open_files)
+
     def poll_check(self):
         """
         Maintains a window of valid image times equal to 3 polling periods. The
         window is determined based on the time the last image was added, all
         images added more than 3 periods prior to the latest image are removed
         """
-
         print("Checkup")
-        # pop the images and add them to the buffer, updating their time stamps
 
-        #
+        # pop the images and add them to the buffer, updating their time stamps
+        tmp_images = self.handler.pop_images(True)
+        if tmp_images or item_count(tmp_images) == 0:
+            return
+
+        now = datetime.datetime.utcnow()
+        for group, filename in tmp_images.items():
+            self.open_files[group][filename] = now
+
         # remove images that have timed out
+        for group, filedict in self.open_files.items():
+            for filename in list(filedict.keys()):
+                if timedelta(filedict[filename], now) > REFRESH_TIME:
+                    print("Removing {}".format(filename))
+                    del filedict[filename]
+
+        # update images
+        display_images()
 
         # reset timer
         self.after(RESET_SECONDS*1000, MainApp.poll_check)
