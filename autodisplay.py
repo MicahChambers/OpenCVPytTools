@@ -30,41 +30,43 @@ import pyinotify
 
 RESET_SECONDS = 1
 IMG_EXTS = ['jpeg' ,'jpg', 'png']
-#GROUPS = ['INPUTS', 'OUTPUTS']
-GROUPS = ['OUTPUTS']
-MainApp = None
 
 def main(path='.', exts=[], timeout=1):
-    global MainApp
-
-    # create monitoring service
-    wm = pyinotify.WatchManager()
-    wm.add_watch(path, pyinotify.ALL_EVENTS, rec=True, auto_add=True)
-    handler = OnWriteHandler(cwd=path, exts=exts, timeout=timeout)
-    notifier = pyinotify.ThreadedNotifier(wm, default_proc_fun=handler)
-    #import ipdb; ipdb.set_trace()
-    print '==> Start monitoring %s (type c^c to exit)' % path
-    notifier.start()
 
     # create application window
-    MainApp = Application()
-    MainApp.master.title('Sample application')
+     MainApp = Application('Auto Display')
 
     # runs until window closed
     try:
-        MainApp.after(2000, MainApp.checkup)
+        MainApp.after(RESET_SECONDS*1000, MainApp.poll_check)
         MainApp.mainloop()
-        notifier.stop()
+
+        sys.exit(0)
     except:
-        notifier.stop()
-    sys.exit(0)
+        sys.exit(-1)
 
 
 class Application(tk.Frame):
+    open_files = {}
+
     def __init__(self, master=None):
         tk.Frame.__init__(self, master)
         self.grid(sticky=tk.N+tk.S+tk.E+tk.W)
         self.createWidgets()
+
+        # create monitoring service
+        wm = pyinotify.WatchManager()
+        wm.add_watch(path, pyinotify.ALL_EVENTS, rec=True, auto_add=True)
+        self.handler = OnWriteHandler(cwd=path, exts=exts, timeout=timeout)
+        notifier = pyinotify.ThreadedNotifier(wm, default_proc_fun=self.handler)
+        print('==> Start monitoring %s (type c^c to exit)' % path)
+        notifier.start()
+
+        # all open files (across groups)
+        self.open_files = {}
+
+    def __del__(self):
+        notifier.stop()
 
     def createWidgets(self):
         top=self.winfo_toplevel()
@@ -94,94 +96,129 @@ class Application(tk.Frame):
         label_out.grid(         row=3, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
         self.img_window_2.grid( row=4, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
 
-    def checkup(self):
-        print("Checkup")
-        self.after(2000, MainApp.checkup)
+    def poll_check(self):
+        """
+        Maintains a window of valid image times equal to 3 polling periods. The
+        window is determined based on the time the last image was added, all
+        images added more than 3 periods prior to the latest image are removed
+        """
 
-    def change_images(self, inputs, outputs):
-        print("Configuration updated!")
-#        self.img = tk.PhotoImage(file='cpptest/test.ppm')
-#        id1 = self.img_window_1.create_oval(10, 10, 100, 100)
-#        id2 = self.img_window_1.create_image(100, 100, image=self.img)
-#        id3 = self.img_window_2.create_image(100, 100, image=self.img)
+        print("Checkup")
+        # pop the images and add them to the buffer, updating their time stamps
+
+        #
+        # remove images that have timed out
+
+        # reset timer
+        self.after(RESET_SECONDS*1000, MainApp.poll_check)
 
 class OnWriteHandler(pyinotify.ProcessEvent):
+    cwd = ""
+    exts = []
+    timeout = 1
+
+    ignore = Counter()
+    ignore_lock = threading.Lock()
+
+    active = defaultdict(set)
+    active_lock = threading.Lock()
+
     def __init__(self, cwd, exts, timeout):
         self.cwd = cwd
         self.exts = exts
         self.timeout = timeout
 
-        # all open files (across groups)
-        self.open_files = {}
-
         # set of files to ignore, temporarily
         self.ignore = Counter()
+        self.ignore_lock = threading.Lock()
 
-        # set of active images, keyed by group
+        # set of active image filenames, keyed by group
         self.active = defaultdict(set)
+        self.active_lock = threading.Lock()
 
-        # if, during update the last update was too long ago, remove all
-        self.last_update = datetime.datetime.utcnow()
 
-#    def tile(self, group):
-#        # make sure all the files in the file list have been read
-#        tmp = None
-#        pprint(self.active)
-#        for f in self.active[group]:
-#            print(f)
-#            if f not in self.open_files:
-#                # re-read file (and ignore in the interim)
-#                import ipdb; ipdb.set_trace()
-#                self.ignore[f] += 3
-#                self.open_files[f] = Image.open(f)
-#                tmp = f
-#
-#        pprint(self.open_files)
-#        # tile the images, by factoring
-#        # TODO, for now just show the latest image
-#        #buf = self.group_buffers[group]
-#        #cv2.resize(self.open_files[tmp], buf.shape, buf)
-#        #print('imshow', group, buf)
-#        #cv2.imshow(group, buf)
-#        # will just open up lots of images! need to modify in place?
-#        self.open_files[tmp].show()
+    def pop_images(self, block=False, copy=True):
+        """
+        Clear all images from the set of active images, potentially returning
+        the value just prior to deletion. Uses the appropriate lock to prevent
+        race conditions. If block=True then wait for the lock to release before
+        returning otherwise if the lock is used elsewhere it will return None.
 
-    def check_show(self, path, group):
+        :param bool block: Block while waiting for the lock
+        :param bool copy: Return a copy
+        :return dict or None: Dictionary containing images just prior to
+        deletion, keyed by type or - if the lock could not be acquired and
+        block=False - None
+        """
+        if not self.active_lock.acquire(block):
+            return None
+
+        try:
+            tmp = copy.deepcopy(self.active)
+            for k in self.active.keys():
+                del self.active[k]
+        except Exception as e:
+            print(e)
+            tmp = None
+
+        self.active_lock.release()
+        return tmp
+
+    def get_images(self, block=False):
+        """
+        Get the current active images, and use the appropriate lock to prevent
+        race conditions. Will wait for lock if block=True,
+        otherwise if the lock is used elsewhere it will return None.
+
+        :param bool block: Block while waiting for the lock
+        :return dict or None: Dictionary containing images, keyed by type or -
+        if the lock could not be acquired and block=False - None
+        """
+        if not self.active_lock.acquire(block):
+            return None
+
+        try:
+            tmp = copy.deepcopy(self.active)
+        except copy.error as e:
+            print(e)
+            tmp = None
+
+        self.active_lock.release()
+        return tmp
+
+    def process_IN_CLOSE_NOWRITE(self, event):
+        self.ignore_lock.acquire()
+        if self.ignore[event.pathname] == 0:
+            self.ignore_lock.release()
+            self.check_show(event.pathname, 'OUTPUTS')
+        else:
+            self.ignore[event.pathname] -= 1
+            self.ignore_lock.release()
+
+    def process_IN_CLOSE_WRITE(self, event):
+        self.ignore_lock.acquire()
+        if self.ignore[event.pathname] == 0:
+            self.ignore_lock.release()
+            self.update_active(event.pathname, 'OUTPUTS')
+        else:
+            self.ignore[event.pathname] -= 1
+            self.ignore_lock.release()
+
+    def update_active(self, path, group):
         now = datetime.datetime.utcnow()
-        if (now - self.last_update).total_seconds() > RESET_SECONDS:
-            self.active = defaultdict(set)
-            self.last_update = now
 
-        is_image = False
         path = path.lower()
         for ext in IMG_EXTS:
             if path.endswith(ext):
-                is_image = True
-
                 # set as active
+                self.active_lock.acquire()
                 self.active[group].add(path)
-                print('make active {}'.format(self.active))
-                # remove from buffered files since there was a change
-                if path in self.open_files:
-                    del self.open_files[path]
+                self.active_lock.release()
 
-        # update buffer with new image
-        if is_image:
-            pprint(self.active)
-            #self.tile(group)
-
-    def process_IN_CLOSE_NOWRITE(self, event):
-        if self.ignore[event.pathname] == 0:
-            self.check_show(event.pathname, 'OUTPUTS')
-        else:
-            self.ignore[event.pathname] -= 1
-
-    def process_IN_CLOSE_WRITE(self, event):
-        if self.ignore[event.pathname] == 0:
-            self.check_show(event.pathname, 'OUTPUTS')
-        else:
-            self.ignore[event.pathname] -= 1
-
+    def bump_ignore(path, count=1):
+        self.ignore_lock.acquire()
+        self.ignore[path] += count
+        self.ignore_lock.release()
 
 #def cvShowManyImages(title, *args):
 #
