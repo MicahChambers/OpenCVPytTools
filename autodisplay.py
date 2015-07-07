@@ -312,17 +312,15 @@ class OnWriteHandler(pyinotify.ProcessEvent):
         return tmp
 
     def process_IN_CLOSE_NOWRITE(self, event):
-        print("close read", event)
         self.ignore_lock.acquire()
         if self.ignore[event.pathname] == 0:
             self.ignore_lock.release()
-            self.update_active(event.pathname, 'OUTPUT')
+            self.update_active(event.pathname, 'INPUT')
         else:
             self.ignore[event.pathname] -= 1
             self.ignore_lock.release()
 
     def process_IN_CLOSE_WRITE(self, event):
-        print("close write", event)
         self.ignore_lock.acquire()
         if self.ignore[event.pathname] == 0:
             self.ignore_lock.release()
@@ -333,16 +331,20 @@ class OnWriteHandler(pyinotify.ProcessEvent):
 
     def update_active(self, path, group):
         lower_path = path.lower()
+        change = False
         for ext in IMG_EXTS:
             if lower_path.endswith(ext):
                 # set as active
                 self.active_lock.acquire()
                 self.active[group].add(path)
                 self.active_lock.release()
+                change = True
 
         # changed active, so run callback
-        if self.event_callback:
-           self.event_callback()
+        if change:
+            print("{}: {}".format(group, path))
+            if self.event_callback:
+               self.event_callback()
 
     def bump_ignore(self, path, count=1):
         self.ignore_lock.acquire()
