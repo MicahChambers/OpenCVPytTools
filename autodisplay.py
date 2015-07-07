@@ -18,6 +18,7 @@ import datetime
 import copy
 import sys
 import threading
+import math
 from pprint import pprint
 
 from optparse import OptionParser
@@ -34,26 +35,54 @@ REFRESH_TIME = 1
 RESET_SECONDS = 1
 IMG_EXTS = ['jpeg', 'jpg', 'png']
 
+def test(path='.', exts=[], timeout=1):
+    # create application window
+    MainApp = Application(path, exts, timeout)
+
+    MainApp.access_times['INPUT']['/home/micahc/opensource/OpenCVPytTools/cpptest/test.png'] = datetime.datetime(1984,1,1)
+    MainApp.access_times['INPUT']['/home/micahc/opensource/OpenCVPytTools/cpptest/output.png'] = datetime.datetime(1984,1,1)
+    MainApp.access_times['OUTPUT']['/home/micahc/opensource/OpenCVPytTools/cpptest/test.png'] = datetime.datetime(1984,1,1)
+    MainApp.access_times['OUTPUT']['/home/micahc/opensource/OpenCVPytTools/cpptest/output.png'] = datetime.datetime(1984,1,1)
+    MainApp.after(1000, MainApp.display_images)
+    # runs until window closed
+    try:
+        MainApp.mainloop()
+        return 0
+    except Exception as e:
+        print(e)
+        MainApp._on_closed()
+        return -1
+    except KeyError as e:
+        print(e)
+        MainApp._on_closed()
+        return -1
+
+
 def main(path='.', exts=[], timeout=1):
 
     # create application window
     MainApp = Application(path, exts, timeout)
 
-    MainApp.open_files['INPUT']['/home/micahc/opensource/OpenCVPytTools/cpptest/test.png'] = datetime.datetime(1984,1,1)
-    MainApp.open_files['OUTPUT']['/home/micahc/opensource/OpenCVPytTools/cpptest/output.png'] = datetime.datetime(1984,1,1)
-    # runs until window closed
     try:
-        MainApp.after(RESET_SECONDS*1000, MainApp.poll_check)
-        MainApp.display_images()
+        # runs until window closed
         MainApp.mainloop()
         return 0
-    except:
+    except Exception as e:
+        print(e)
+        MainApp._on_closed()
+        return -1
+    except KeyError as e:
+        print(e)
         MainApp._on_closed()
         return -1
 
 
 class Application(tk.Frame):
-    open_files = defaultdict(dict)
+    access_times = defaultdict(dict)
+    open_files = {}
+    img_window = {}
+    after_lock = threading.Lock()
+    after_id = None
 
     def __init__(self, path, exts, timeout, master=None):
         tk.Frame.__init__(self, master)
@@ -63,13 +92,14 @@ class Application(tk.Frame):
         # create monitoring service
         wm = pyinotify.WatchManager()
         wm.add_watch(path, pyinotify.ALL_EVENTS, rec=True, auto_add=True)
-        self.handler = OnWriteHandler(cwd=path, exts=exts, timeout=timeout)
+        self.handler = OnWriteHandler(cwd=path, exts=exts, timeout=timeout,
+                                      event_callback = self.updated_files)
         self.notifier = pyinotify.ThreadedNotifier(wm, default_proc_fun=self.handler)
         print('==> Start monitoring %s (type c^c to exit)' % path)
         self.notifier.start()
 
         # all open files (across groups)
-        self.open_files = defaultdict(dict)  # open_files[group][filename] = time
+        self.access_times = defaultdict(dict)  # access_times[group][filename] = time
 
         self.bind_all('<Destroy>', self._on_closed)
 
@@ -96,24 +126,77 @@ class Application(tk.Frame):
         self.quit_botton = tk.Button(self, text='Quit', command=self._on_closed)
         self.quit_botton.grid(row=0, column=0, sticky=tk.N+tk.E+tk.W)
         label_in = tk.Label(self, text='Inputs')
-        self.img_window_1 = tk.Canvas(self, bg='#FFFFFF')
+        self.img_window['INPUT'] = tk.Canvas(self, bg='#FFFFFF')
         label_out = tk.Label(self, text='Outputs')
-        self.img_window_2 = tk.Canvas(self, bg='#FFFFFF')
+        self.img_window['OUTPUT'] = tk.Canvas(self, bg='#FFFFFF')
 
         label_in.grid(          row=1, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
-        self.img_window_1.grid( row=2, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
+        self.img_window['INPUT'].grid( row=2, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
         label_out.grid(         row=3, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
-        self.img_window_2.grid( row=4, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
+        self.img_window['OUTPUT'].grid( row=4, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
 
     def display_images(self):
         print("Display Images")
-        for group, filedict in self.open_files.items():
+        for group, filedict in self.access_times.items():
+            # compute size of individual images
+            imgcount = len(filedict)
+            window = self.img_window[group]
+            height = window.winfo_height()
+            width = window.winfo_width()
+
+            # create roughly square subdivisions
+            n_rows = 0
+            n_cols = 0
+            while n_rows*n_cols < imgcount:
+                if width < height:
+                    n_rows += 1
+                    if n_rows >= imgcount:
+                        n_cols = 1
+                    else:
+                        row_height = int(float(height)/n_rows)
+                        n_cols = width/row_height
+                else:
+                    n_cols += 1
+                    if n_cols >= imgcount:
+                        n_rows = 1
+                    else:
+                        col_width = int(float(width)/n_cols)
+                        n_cols = width/col_width
+
+
+            row_height = int((float(height)/n_rows))
+            col_width = int((float(width)/n_cols))
+            print("Full: {} x {}".format(height, width))
+            print("Blocks: {} x {}".format(n_rows, n_cols))
+            print("Block Sizes: {} x {}".format(row_height, col_width))
+
+            row = 0
+            col = 0
             for path in filedict.keys():
+                # ignore one change because we are going to read it once
                 self.handler.bump_ignore(path)
 
-                # placeholder
-                f = open(path, "r")
-                print(path)
+                image = tk.PhotoImage(file=path)
+                self.open_files[path] = image
+                x = col_width*col
+                y = row_height*row
+                print("{} at {}, {}".format(path, x, y))
+                self.img_window[group].create_image(x, y, image=image)
+
+                col += 1
+                if col == n_cols:
+                    col = 0
+                    row += 1
+
+    def updated_files(self):
+        # reset timer
+        self.after_lock.acquire()
+
+        if self.after_id:
+            self.after_cancel(self.after_id)
+        self.after_id = self.after(RESET_SECONDS*1000, self.poll_check)
+
+        self.after_lock.release()
 
     def poll_check(self):
         """
@@ -122,9 +205,6 @@ class Application(tk.Frame):
         images added more than 3 periods prior to the latest image are removed
         """
         print("Checkup")
-
-        # reset timer
-        self.after(RESET_SECONDS*1000, self.poll_check)
 
         # pop the images and add them to the buffer, updating their time stamps
         tmp_images = self.handler.pop_images(True, True)
@@ -136,10 +216,10 @@ class Application(tk.Frame):
         now = datetime.datetime.utcnow()
         for group, active_images in tmp_images.items():
             for filename in active_images:
-                self.open_files[group][filename] = now
+                self.access_times[group][filename] = now
 
         # remove images that have timed out
-        for group, filedict in self.open_files.items():
+        for group, filedict in self.access_times.items():
             for filename in list(filedict.keys()):
                 if (now-filedict[filename]).total_seconds() > REFRESH_TIME:
                     print("Removing {}".format(filename))
@@ -160,7 +240,7 @@ class OnWriteHandler(pyinotify.ProcessEvent):
     active = defaultdict(set)
     active_lock = threading.Lock()
 
-    def __init__(self, cwd, exts, timeout):
+    def __init__(self, cwd, exts, timeout, event_callback = None):
         self.cwd = cwd
         self.exts = exts
         self.timeout = timeout
@@ -172,6 +252,8 @@ class OnWriteHandler(pyinotify.ProcessEvent):
         # set of active image filenames, keyed by group
         self.active = defaultdict(set)
         self.active_lock = threading.Lock()
+
+        self.event_callback = event_callback
 
 
     def pop_images(self, block=False, return_copy=True):
@@ -234,7 +316,7 @@ class OnWriteHandler(pyinotify.ProcessEvent):
         self.ignore_lock.acquire()
         if self.ignore[event.pathname] == 0:
             self.ignore_lock.release()
-            self.update_active(event.pathname, 'OUTPUTS')
+            self.update_active(event.pathname, 'OUTPUT')
         else:
             self.ignore[event.pathname] -= 1
             self.ignore_lock.release()
@@ -244,7 +326,7 @@ class OnWriteHandler(pyinotify.ProcessEvent):
         self.ignore_lock.acquire()
         if self.ignore[event.pathname] == 0:
             self.ignore_lock.release()
-            self.update_active(event.pathname, 'OUTPUTS')
+            self.update_active(event.pathname, 'OUTPUT')
         else:
             self.ignore[event.pathname] -= 1
             self.ignore_lock.release()
@@ -257,6 +339,10 @@ class OnWriteHandler(pyinotify.ProcessEvent):
                 self.active_lock.acquire()
                 self.active[group].add(path)
                 self.active_lock.release()
+
+        # changed active, so run callback
+        if self.event_callback:
+           self.event_callback()
 
     def bump_ignore(self, path, count=1):
         self.ignore_lock.acquire()
